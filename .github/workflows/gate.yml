@@ -1,0 +1,16 @@
+name: publish-gate
+# Nothing reaches "production" until the founder approves the deployment.
+on: workflow_dispatch
+permissions:
+  contents: read
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    steps:
+      - run: echo "built at $(date -u +%FT%TZ)" | tee -a "$GITHUB_STEP_SUMMARY"
+  publish:
+    needs: build
+    runs-on: ubuntu-24.04
+    environment: production
+    steps:
+      - run: echo "published at $(date -u +%FT%TZ), after approval" | tee -a "$GITHUB_STEP_SUMMARY"

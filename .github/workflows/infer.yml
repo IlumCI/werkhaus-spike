@@ -1,0 +1,69 @@
+name: infer
+# How fast and how reliable a local model is on a standard runner's CPU.
+# Run it twice: the first run measures a cold pull, the second a cache restore.
+on:
+  workflow_dispatch:
+    inputs:
+      runs:
+        description: Generations per model
+        default: "20"
+permissions:
+  contents: read
+jobs:
+  bench:
+    name: ${{ matrix.model.slug }} on ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, ubuntu-24.04-arm]
+        model:
+          - { tag: "qwen2.5-coder:3b", slug: qwen25coder-3b }
+          - { tag: "qwen2.5-coder:7b", slug: qwen25coder-7b }
+          - { tag: "qwen3:4b", slug: qwen3-4b }
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 150
+    env:
+      OLLAMA_MODELS: /home/runner/ollama-models
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - run: pip install jsonschema
+      - name: Machine
+        run: |
+          { echo "### Machine"; echo '```'; nproc; lscpu | grep -E 'Model name|Flags' | cut -c1-120; free -g; df -h / | tail -1; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+      - id: install
+        run: bash spike/ollama.sh
+      - id: cache
+        uses: actions/cache/restore@v4
+        with:
+          path: /home/runner/ollama-models
+          key: ollama-${{ matrix.model.slug }}-${{ runner.arch }}
+      - id: pull
+        run: |
+          t0=$(date +%s.%N)
+          ollama pull "${{ matrix.model.tag }}" > /dev/null
+          echo "pull_s=$(echo "$(date +%s.%N) - $t0" | bc)" >> "$GITHUB_OUTPUT"
+          du -sh /home/runner/ollama-models
+      - if: steps.cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: /home/runner/ollama-models
+          key: ollama-${{ matrix.model.slug }}-${{ runner.arch }}
+      - name: Bench
+        run: python spike/bench.py "${{ matrix.model.tag }}" "${{ inputs.runs }}" results.json
+      - name: Summary
+        run: |
+          {
+            echo "- cache hit: ${{ steps.cache.outputs.cache-hit || 'false' }}"
+            echo "- install: ${{ steps.install.outputs.install_s }}s, pull/verify after cache step: ${{ steps.pull.outputs.pull_s }}s"
+            python spike/summarize.py "${{ matrix.model.tag }} on ${{ matrix.os }}" results.json
+          } >> "$GITHUB_STEP_SUMMARY"
+          cp results.json "results-${{ matrix.model.slug }}-${{ runner.arch }}.json"
+          echo '{"cache_hit":"${{ steps.cache.outputs.cache-hit }}","install_s":"${{ steps.install.outputs.install_s }}","pull_s":"${{ steps.pull.outputs.pull_s }}"}' > "setup-${{ matrix.model.slug }}-${{ runner.arch }}.json"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: infer-${{ matrix.model.slug }}-${{ runner.arch }}-${{ github.run_attempt }}
+          path: |
+            results-*.json
+            setup-*.json

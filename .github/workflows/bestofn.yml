@@ -1,0 +1,110 @@
+name: best-of-n
+# Twenty candidates in parallel, each through the schema and forge test; a
+# judge job collects the survivors and measures how parallel it really was.
+on:
+  workflow_dispatch:
+    inputs:
+      model:
+        default: "qwen2.5-coder:3b"
+      slug:
+        default: qwen25coder-3b
+permissions:
+  contents: read
+jobs:
+  candidate:
+    strategy:
+      fail-fast: false
+      matrix:
+        i: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    env:
+      OLLAMA_MODELS: /home/runner/ollama-models
+    steps:
+      - run: echo "STARTED=$(date -u +%s)" >> "$GITHUB_ENV"
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - run: pip install jsonschema
+      - run: bash spike/ollama.sh
+      - uses: actions/cache/restore@v4
+        with:
+          path: /home/runner/ollama-models
+          key: ollama-${{ inputs.slug }}-${{ runner.arch }}
+      - run: ollama pull "${{ inputs.model }}" > /dev/null
+      - run: python spike/bench.py "${{ inputs.model }}" 1 bench.json --seed "${{ matrix.i }}"
+      - name: Extract
+        id: extract
+        run: |
+          mkdir -p candidate
+          python - <<'PY'
+          import json, os
+          r = json.load(open("bench.json"))[0]
+          json.dump(r.get("params", {}), open("candidate/params.json", "w"))
+          open(os.environ["GITHUB_OUTPUT"], "a").write(f"valid={'true' if r.get('valid') else 'false'}\n")
+          PY
+      - uses: foundry-rs/foundry-toolchain@v1
+        if: steps.extract.outputs.valid == 'true'
+      - name: Gate
+        id: gate
+        if: steps.extract.outputs.valid == 'true'
+        continue-on-error: true
+        working-directory: gate
+        env:
+          PARAMS: ${{ github.workspace }}/candidate/params.json
+        run: |
+          forge install --no-git foundry-rs/forge-std > /dev/null
+          forge test -q
+      - name: Record
+        if: always()
+        run: |
+          python - <<'PY'
+          import json, os, time
+          r = json.load(open("bench.json"))[0] if os.path.exists("bench.json") else {}
+          json.dump({
+              "i": ${{ matrix.i }},
+              "started": int(os.environ["STARTED"]),
+              "ended": int(time.time()),
+              "schema_valid": r.get("valid", False),
+              "forge_pass": "${{ steps.gate.outcome }}" == "success",
+              "output_tok_per_s": r.get("output_tok_per_s"),
+              "wall_s": r.get("wall_s"),
+              "errors": r.get("errors"),
+              "params": r.get("params"),
+          }, open("result.json", "w"), indent=2)
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: cand-${{ matrix.i }}
+          path: result.json
+  judge:
+    needs: candidate
+    if: always()
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/download-artifact@v4
+        with: { pattern: cand-*, path: cands }
+      - name: Judge
+        run: |
+          python - <<'PY' | tee -a "$GITHUB_STEP_SUMMARY"
+          import glob, json
+          rs = [json.load(open(p)) for p in glob.glob("cands/*/result.json")]
+          ok = [r for r in rs if r["schema_valid"] and r["forge_pass"]]
+          starts = sorted(r["started"] for r in rs); ends = sorted(r["ended"] for r in rs)
+          events = sorted([(r["started"], 1) for r in rs] + [(r["ended"], -1) for r in rs])
+          peak = cur = 0
+          for _, d in events:
+              cur += d; peak = max(peak, cur)
+          print(f"### Best of {len(rs)}")
+          print(f"- schema-valid: {sum(r['schema_valid'] for r in rs)}, passed forge gate: {len(ok)}")
+          print(f"- peak concurrent candidates: {peak}; first start → last end: {max(ends) - min(starts)}s; start spread: {starts[-1] - starts[0]}s")
+          # Deterministic pick for the spike: the passing candidate with the most page copy.
+          if ok:
+              best = max(ok, key=lambda r: sum(len(s["body"]) for s in r["params"]["page_sections"]))
+              print(f"- picked candidate {best['i']}:")
+              print("```json"); print(json.dumps(best["params"], indent=2)); print("```")
+          json.dump(rs, open("judge.json", "w"), indent=2)
+          PY
+      - uses: actions/upload-artifact@v4
+        with: { name: judge, path: judge.json }

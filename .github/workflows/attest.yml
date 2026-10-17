@@ -1,0 +1,30 @@
+name: attest
+# Signed build provenance for a template's bytecode: who built it, from which
+# commit, by which workflow. Verify with: gh attestation verify <file> -o IlumCI
+on: workflow_dispatch
+permissions:
+  contents: read
+  id-token: write
+  attestations: write
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: foundry-rs/foundry-toolchain@v1
+      - working-directory: gate
+        run: |
+          forge install --no-git foundry-rs/forge-std > /dev/null
+          forge build
+          jq -r .bytecode.object out/StakingConfig.sol/StakingConfig.json > StakingConfig.initcode
+          jq -r .deployedBytecode.object out/StakingConfig.sol/StakingConfig.json > StakingConfig.runtime
+          sha256sum StakingConfig.* | tee -a "$GITHUB_STEP_SUMMARY"
+      - uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: |
+            gate/StakingConfig.initcode
+            gate/StakingConfig.runtime
+      - uses: actions/upload-artifact@v4
+        with:
+          name: bytecode
+          path: gate/StakingConfig.*
