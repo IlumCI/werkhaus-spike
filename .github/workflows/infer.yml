@@ -31,7 +31,7 @@ jobs:
       - run: pip install jsonschema
       - name: Machine
         run: |
-          { echo "### Machine"; echo '```'; nproc; lscpu | grep -E 'Model name|Flags' | cut -c1-120; free -g; df -h / | tail -1; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+          { echo "### Machine"; echo '```'; nproc; lscpu | grep -E 'Model name|Flags' | cut -c1-120; free -g; df -h / | tail -1; echo '```'; } | tee -a "$GITHUB_STEP_SUMMARY"
       - id: install
         run: bash spike/ollama.sh
       - id: cache
@@ -58,7 +58,7 @@ jobs:
             echo "- cache hit: ${{ steps.cache.outputs.cache-hit || 'false' }}"
             echo "- install: ${{ steps.install.outputs.install_s }}s, pull/verify after cache step: ${{ steps.pull.outputs.pull_s }}s"
             python spike/summarize.py "${{ matrix.model.tag }} on ${{ matrix.os }}" results.json
-          } >> "$GITHUB_STEP_SUMMARY"
+          } | tee -a "$GITHUB_STEP_SUMMARY"
           cp results.json "results-${{ matrix.model.slug }}-${{ runner.arch }}.json"
           echo '{"cache_hit":"${{ steps.cache.outputs.cache-hit }}","install_s":"${{ steps.install.outputs.install_s }}","pull_s":"${{ steps.pull.outputs.pull_s }}"}' > "setup-${{ matrix.model.slug }}-${{ runner.arch }}.json"
       - uses: actions/upload-artifact@v4

@@ -23,10 +23,10 @@ jobs:
           t0=$(date +%s)
           docker run -d --name sx -p 8888:8080 -v "$PWD/sx:/etc/searxng" docker.io/searxng/searxng:latest > /dev/null
           for _ in $(seq 1 90); do curl -sf localhost:8888/healthz > /dev/null && break; sleep 1; done
-          echo "- SearXNG up in $(( $(date +%s) - t0 ))s (incl. image pull)" >> "$GITHUB_STEP_SUMMARY"
+          echo "- SearXNG up in $(( $(date +%s) - t0 ))s (incl. image pull)" | tee -a "$GITHUB_STEP_SUMMARY"
           for q in "robinhood chain launchpad" "uniswap v4 hooks" "staking rewards contract"; do
             curl -s "localhost:8888/search?q=$(echo $q | sed 's/ /+/g')&format=json" \
-              | jq -r --arg q "$q" '"- \"\($q)\": \(.results|length) results from \([.results[].engine]|unique|join(", ")); unresponsive: \(.unresponsive_engines|map(.[0])|join(", "))"' >> "$GITHUB_STEP_SUMMARY"
+              | jq -r --arg q "$q" '"- \"\($q)\": \(.results|length) results from \([.results[].engine]|unique|join(", ")); unresponsive: \(.unresponsive_engines|map(.[0])|join(", "))"' | tee -a "$GITHUB_STEP_SUMMARY"
           done
       - uses: foundry-rs/foundry-toolchain@v1
       - name: Anvil fork of Robinhood Chain
@@ -38,14 +38,14 @@ jobs:
             echo "- anvil fork up in $(( $(date +%s) - t0 ))s"
             echo "- chain id $(cast chain-id --rpc-url http://127.0.0.1:8545), block $(cast block-number --rpc-url http://127.0.0.1:8545)"
             echo "- PoolManager code size on the fork: $(cast codesize 0x8366a39CC670B4001A1121B8F6A443A643e40951 --rpc-url http://127.0.0.1:8545) bytes"
-          } >> "$GITHUB_STEP_SUMMARY"
+          } | tee -a "$GITHUB_STEP_SUMMARY"
       - name: Chromium
         run: |
           CHROME=$(command -v google-chrome || command -v chromium)
-          "$CHROME" --version >> "$GITHUB_STEP_SUMMARY"
+          "$CHROME" --version | tee -a "$GITHUB_STEP_SUMMARY"
           "$CHROME" --headless=new --no-sandbox --hide-scrollbars --screenshot=desk-1440.png --window-size=1440,900 https://werkha.us
           "$CHROME" --headless=new --no-sandbox --hide-scrollbars --screenshot=desk-375.png --window-size=375,812 https://werkha.us
-          ls -la desk-*.png >> "$GITHUB_STEP_SUMMARY"
+          ls -la desk-*.png | tee -a "$GITHUB_STEP_SUMMARY"
       - uses: actions/upload-artifact@v4
         with:
           name: screenshots
