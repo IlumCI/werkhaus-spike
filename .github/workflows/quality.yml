@@ -1,0 +1,41 @@
+name: quality
+# Phase 0b: speed is not the product, honesty is. Bigger models and models
+# that think first, scored on the same fabrication heuristic as Phase 0.
+on:
+  workflow_dispatch:
+    inputs:
+      runs:
+        default: "20"
+permissions:
+  contents: read
+jobs:
+  bench:
+    name: ${{ matrix.m.tag }} think=${{ matrix.m.think }}
+    strategy:
+      fail-fast: false
+      matrix:
+        m:
+          - { tag: "qwen3:4b", think: "1", slug: qwen3-4b-think }
+          - { tag: "qwen3:14b", think: "0", slug: qwen3-14b }
+          - { tag: "qwen3:14b", think: "1", slug: qwen3-14b-think }
+          - { tag: "qwen2.5-coder:14b", think: "0", slug: qwen25coder-14b }
+          - { tag: "gemma3:12b", think: "0", slug: gemma3-12b }
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 360
+    env:
+      OLLAMA_MODELS: /home/runner/ollama-models
+      THINK: ${{ matrix.m.think }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - run: pip install jsonschema
+      - run: bash spike/ollama.sh
+      - run: ollama pull "${{ matrix.m.tag }}" > /dev/null && du -sh "$OLLAMA_MODELS" && free -g
+      - run: python spike/bench.py "${{ matrix.m.tag }}" "${{ inputs.runs }}" "results-${{ matrix.m.slug }}.json"
+      - run: python spike/summarize.py "${{ matrix.m.slug }}" "results-${{ matrix.m.slug }}.json" | tee -a "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: quality-${{ matrix.m.slug }}
+          path: results-*.json

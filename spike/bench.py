@@ -12,6 +12,7 @@ what this measures).
 from __future__ import annotations
 
 import json
+import os
 import sys
 import time
 import urllib.request
@@ -51,7 +52,7 @@ def run(model: str, idea: str, seed: int) -> dict:
         "prompt": PROMPT.format(idea=idea),
         "format": SCHEMA,
         "stream": False,
-        "think": False,
+        "think": os.getenv("THINK") == "1",
         "options": {"temperature": 0.8, "seed": seed, "num_ctx": 4096},
     }
     req = urllib.request.Request(
@@ -60,7 +61,7 @@ def run(model: str, idea: str, seed: int) -> dict:
         headers={"Content-Type": "application/json"},
     )
     started = time.monotonic()
-    with urllib.request.urlopen(req, timeout=1800) as resp:
+    with urllib.request.urlopen(req, timeout=3600) as resp:
         out = json.load(resp)
     wall = time.monotonic() - started
     record = {
@@ -72,6 +73,7 @@ def run(model: str, idea: str, seed: int) -> dict:
         "prompt_s": out.get("prompt_eval_duration", 0) / 1e9,
         "output_tokens": out.get("eval_count", 0),
         "output_s": out.get("eval_duration", 0) / 1e9,
+        "thinking_chars": len(out.get("thinking") or ""),
     }
     record["output_tok_per_s"] = (
         round(record["output_tokens"] / record["output_s"], 2) if record["output_s"] else None
